@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import os
 import time
 import argparse
+from torch.profiler import profile, record_function, ProfilerActivity
 
 # Global variables for timing comparison
 row_wise_time = 0
@@ -55,7 +56,7 @@ class TensorParallelLinear(torch.nn.Module):
             dist.all_reduce(y_partial, op=dist.ReduceOp.SUM)
             return y_partial + self.b
 
-def train_loop(rank, world_size, mode="row", init_distributed=True):
+def train_loop(rank, world_size, mode="row", init_distributed=True, enable_profiler=False):
     global row_wise_time, column_wise_time
     
     if init_distributed:
@@ -69,11 +70,11 @@ def train_loop(rank, world_size, mode="row", init_distributed=True):
     torch.cuda.set_device(rank)
     device = torch.device(f"cuda:{rank}")
     
-    model = TensorParallelLinear(100, 100, rank, world_size, device, mode).to(device)
+    model = TensorParallelLinear(1000 , 1000, rank, world_size, device, mode).to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
     
-    data = torch.randn(20, 100, device=device, requires_grad=True)
-    targets = torch.randn(20, 100, device=device)
+    data = torch.randn(20, 1000, device=device, requires_grad=True)
+    targets = torch.randn(20, 1000, device=device)
     
     # Warmup
     for _ in range(2):
@@ -87,25 +88,56 @@ def train_loop(rank, world_size, mode="row", init_distributed=True):
                 param.grad /= world_size
         optimizer.step()
     
+    # Setup profiler
+    if enable_profiler:
+        profiler_dir = f"profiler_logs_rank_{rank}_{mode}"
+        os.makedirs(profiler_dir, exist_ok=True)
+        
+        profiler = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler(profiler_dir),
+            record_shapes=True,
+            with_stack=True
+        )
+        profiler.start()
+    
     # Timing measurement
     torch.cuda.synchronize()
     start_time = time.time()
     
     for epoch in range(10):
-        optimizer.zero_grad()
-        outputs = model(data)
-        loss = F.mse_loss(outputs, targets)
-        loss.backward()
+        with record_function(f"epoch_{epoch}"):
+            optimizer.zero_grad()
+            
+            with record_function("forward_pass"):
+                outputs = model(data)
+                loss = F.mse_loss(outputs, targets)
+            
+            with record_function("backward_pass"):
+                loss.backward()
+            
+            with record_function("gradient_sync"):
+                for param in model.parameters():
+                    if param.grad is not None:
+                        dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                        param.grad /= world_size
+            
+            with record_function("optimizer_step"):
+                optimizer.step()
         
-        for param in model.parameters():
-            if param.grad is not None:
-                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
-                param.grad /= world_size
-        
-        optimizer.step()
+        if enable_profiler:
+            profiler.step()
         
         if rank == 0:
             print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}")
+    
+    if enable_profiler:
+        profiler.stop()
+        profiler_dir = f"profiler_logs_rank_{rank}_{mode}"
+        if rank == 0:
+            print(f"\nProfiler data saved to {profiler_dir}/")
+            print(f"View with: tensorboard --logdir={profiler_dir}")
     
     torch.cuda.synchronize()
     end_time = time.time()
@@ -131,10 +163,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="both", choices=["row", "column", "both"], 
                        help="Tensor parallel mode: row-wise, column-wise, or both")
+    parser.add_argument("--profile", action="store_true", 
+                       help="Enable PyTorch profiler")
     args = parser.parse_args()
     
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
+    
+    if args.profile and rank == 0:
+        print("Profiling enabled - data will be saved to current directory")
     
     if args.mode == "both":
         if rank == 0:
@@ -151,14 +188,14 @@ def main():
         if rank == 0:
             print("\nRow-wise (all_gather) Tensor Parallelism:")
             print("-" * 40)
-        train_loop(rank, world_size, "row", init_distributed=False)
+        train_loop(rank, world_size, "row", init_distributed=False, enable_profiler=args.profile)
         
         time.sleep(1)
         
         if rank == 0:
             print("\nColumn-wise (all_reduce) Tensor Parallelism:")
             print("-" * 40)
-        train_loop(rank, world_size, "column", init_distributed=False)
+        train_loop(rank, world_size, "column", init_distributed=False, enable_profiler=args.profile)
         
         dist.destroy_process_group()
         
@@ -173,8 +210,12 @@ def main():
             improvement = ((10/row_wise_time) / (10/column_wise_time) - 1) * 100
             print(f"\nRow-wise is {improvement:.0f}% faster than column-wise")
             print("=" * 60)
+            
+            if args.profile:
+                print(f"\nProfiler data saved to current directory")
+                print("View with: tensorboard --logdir=profiler_logs_rank_0_row")
     else:
-        train_loop(rank, world_size, args.mode)
+        train_loop(rank, world_size, args.mode, enable_profiler=args.profile)
 
 if __name__ == "__main__":
     main()

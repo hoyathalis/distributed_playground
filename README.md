@@ -7,6 +7,7 @@ A clean benchmarking implementation of tensor parallel training using PyTorch di
 - **Row-wise Tensor Parallelism**: Horizontal splitting using `all_gather` communication
 - **Column-wise Tensor Parallelism**: Vertical splitting using `all_reduce` communication  
 - **Performance Comparison**: Side-by-side timing and throughput analysis
+- **PyTorch Profiler Integration**: Detailed performance analysis with TensorBoard visualization
 - **NCCL Backend**: Optimized for GPU communication with container compatibility
 
 ## Usage
@@ -18,6 +19,12 @@ torchrun --nproc_per_node=2 tp.py --mode both
 # Run specific mode
 torchrun --nproc_per_node=2 tp.py --mode row
 torchrun --nproc_per_node=2 tp.py --mode column
+
+# Enable PyTorch Profiler (saves data to current directory)
+torchrun --nproc_per_node=2 tp.py --mode both --profile
+
+# View profiler data with TensorBoard
+tensorboard --logdir=profiler_logs_rank_0_row
 ```
 
 ## Implementation Details
@@ -33,18 +40,6 @@ torchrun --nproc_per_node=2 tp.py --mode column
 - Each GPU processes different input slice
 - Uses `all_reduce` to sum partial results
 - Communication: Forward pass + gradient synchronization
-
-## Performance Results
-
-Typical performance comparison on 2x RTX 2000 Ada:
-
-| Metric | Row-wise | Column-wise |
-|--------|----------|-------------|
-| Total Time | ~0.010s | ~0.018s |
-| Throughput | ~1000 eps/s | ~550 eps/s |
-| Speedup | 1.00x | 0.55x |
-
-**Row-wise is typically 80%+ faster** due to lower communication overhead.
 
 ## Requirements
 
