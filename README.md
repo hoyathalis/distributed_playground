@@ -30,13 +30,15 @@ tensorboard --logdir=profiler_logs_rank_0_row
 ## Implementation Details
 
 ### Row-wise (Horizontal) Splitting
-- Splits output features across GPUs
+- **Data**: Input data is **duplicated** across all GPUs
+- **Weights**: Output features are **split** across GPUs
 - Each GPU computes partial output (50 features)
 - Uses `all_gather` to concatenate results
 - Communication: Only gradient synchronization
 
 ### Column-wise (Vertical) Splitting  
-- Splits input features across GPUs
+- **Data**: Input data is **split** across GPUs
+- **Weights**: Input features are **split** across GPUs
 - Each GPU processes different input slice
 - Uses `all_reduce` to sum partial results
 - Communication: Forward pass + gradient synchronization
