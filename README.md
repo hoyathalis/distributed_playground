@@ -63,6 +63,10 @@ tensorboard --logdir=profiler_logs_rank_0_row
 - **All-reduce timing**: More symmetric but still shows slight variations between ranks
 - **Memory access patterns**: Different GPUs may show varying memory bandwidth utilization
 
+#### NCCL Ring Algorithm Visualization
+![NCCL Ring Algorithm](images/nccl_ring_algorithm.png)
+*Visualization of the asymmetric ring topology showing different workloads between GPUs*
+
 ### Profiling Insights
 - **Forward pass**: Usually the most time-consuming operation
 - **Communication kernels**: NCCL operations show varying durations across ranks
