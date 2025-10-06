@@ -46,3 +46,25 @@ tensorboard --logdir=profiler_logs_rank_0_row
 - PyTorch with CUDA support
 - 2+ GPUs
 - NCCL backend (automatically configured)
+
+## Observations
+
+### Performance Characteristics
+- **Row-wise splitting** typically shows 2-3x better performance than column-wise
+- **Communication overhead** is the primary bottleneck in distributed training
+- **All-gather operations** generally have lower latency than all-reduce operations
+- **Throughput** can vary significantly based on tensor sizes and communication patterns
+
+### Communication Patterns
+- **NCCL Ring Algorithm**: Uses asymmetric ring topology where different GPUs have different workloads
+- **All-gather timing**: Ring leader (typically rank 0) completes faster than ring followers
+- **All-reduce timing**: More symmetric but still shows slight variations between ranks
+- **Memory access patterns**: Different GPUs may show varying memory bandwidth utilization
+
+### Profiling Insights
+- **Forward pass**: Usually the most time-consuming operation
+- **Communication kernels**: NCCL operations show varying durations across ranks
+- **Gradient synchronization**: Adds significant overhead to training time
+- **CUDA context switching**: Can cause timing variations between GPUs
+
+*Note: Specific performance numbers vary based on hardware, tensor sizes, and system configuration.*
